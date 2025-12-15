@@ -1,881 +1,593 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Glass Cutting Optimizer Pro</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
-            overflow-x: hidden;
-        }
-
-        @media print {
-            .no-print {
-                display: none;
-            }
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Glass Cutting Optimizer</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif; }
+  </style>
 </head>
-
 <body>
-    <div id="root"></div>
-
-    <script type="text/babel">
-        const { useState, useRef } = React;
-        const { jsPDF } = window.jspdf;
-
-        function GlassCuttingOptimizer() {
-            const [unit, setUnit] = useState('mm');
-            const [availableSheets, setAvailableSheets] = useState([
-                { id: 1, width: 3000, height: 2000, quantity: 999, label: 'Standard Sheet' }
-            ]);
-            const [newSheet, setNewSheet] = useState({ width: '', height: '', quantity: 1, label: '' });
-            const [bladeWidth, setBladeWidth] = useState(0);
-            const [maxCutLength, setMaxCutLength] = useState(3000);
-            const [minUsefulWaste, setMinUsefulWaste] = useState(300);
-            const [minPartSize, setMinPartSize] = useState(100);
-            const [orders, setOrders] = useState([]);
-            const [offcuts, setOffcuts] = useState([]);
-            const [newOrder, setNewOrder] = useState({ width: '', height: '', quantity: 1, customerName: '' });
-            const [optimizedLayout, setOptimizedLayout] = useState(null);
-            const [showSettings, setShowSettings] = useState(true);
-            const layoutRef = useRef(null);
-
-            const unitConversions = {
-                'mm': 1,
-                'cm': 10,
-                'in': 25.4,
-                'm': 1000
-            };
-
-            const convertToMM = (value) => value * unitConversions[unit];
-            const convertFromMM = (value) => value / unitConversions[unit];
-
-            const addSheet = () => {
-                if (newSheet.width && newSheet.height) {
-                    setAvailableSheets([...availableSheets, {
-                        id: Date.now(),
-                        width: convertToMM(parseFloat(newSheet.width)),
-                        height: convertToMM(parseFloat(newSheet.height)),
-                        quantity: parseInt(newSheet.quantity) || 1,
-                        label: newSheet.label || `Sheet ${availableSheets.length + 1}`
-                    }]);
-                    setNewSheet({ width: '', height: '', quantity: 1, label: '' });
-                    setOptimizedLayout(null);
-                }
-            };
-
-            const removeSheet = (id) => {
-                setAvailableSheets(availableSheets.filter(s => s.id !== id));
-                setOptimizedLayout(null);
-            };
-
-            const addOrder = () => {
-                if (newOrder.width && newOrder.height && newOrder.customerName) {
-                    setOrders([...orders, {
-                        id: Date.now(),
-                        width: convertToMM(parseFloat(newOrder.width)),
-                        height: convertToMM(parseFloat(newOrder.height)),
-                        quantity: parseInt(newOrder.quantity) || 1,
-                        customerName: newOrder.customerName
-                    }]);
-                    setNewOrder({ width: '', height: '', quantity: 1, customerName: '' });
-                    setOptimizedLayout(null);
-                }
-            };
-
-            const removeOrder = (id) => {
-                setOrders(orders.filter(o => o.id !== id));
-                setOptimizedLayout(null);
-            };
-
-            const removeOffcut = (id) => {
-                setOffcuts(offcuts.filter(o => o.id !== id));
-            };
-
-            const optimizeCutting = () => {
-                if (orders.length === 0) return;
-
-                const allPieces = [];
-                orders.forEach(order => {
-                    for (let i = 0; i < order.quantity; i++) {
-                        allPieces.push({
-                            width: order.width,
-                            height: order.height,
-                            customerName: order.customerName,
-                            orderId: order.id,
-                            pieceNum: i + 1,
-                            totalPieces: order.quantity
-                        });
-                    }
-                });
-
-                allPieces.sort((a, b) => (b.width * b.height) - (a.width * a.height));
-
-                const sheets = [];
-                const usedOffcuts = [];
-                const sheetUsage = {};
-
-                availableSheets.forEach(sheet => {
-                    sheetUsage[sheet.id] = 0;
-                });
-
-                allPieces.forEach(piece => {
-                    let placed = false;
-                    let bestFit = null;
-                    let bestEfficiency = -1;
-
-                    for (let material of offcuts) {
-                        if (usedOffcuts.includes(material.id)) continue;
-
-                        const testSheet = {
-                            width: material.width,
-                            height: material.height,
-                            pieces: [],
-                            spaces: [{ x: 0, y: 0, width: material.width, height: material.height }],
-                            isOffcut: true,
-                            offcutId: material.id
-                        };
-
-                        if (canPlacePiece(testSheet, piece)) {
-                            const wasteAfter = (material.width * material.height) - (piece.width * piece.height);
-                            const efficiency = ((piece.width * piece.height) / (material.width * material.height)) * 100;
-
-                            if (efficiency > bestEfficiency) {
-                                bestEfficiency = efficiency;
-                                bestFit = { type: 'offcut', material, testSheet };
-                            }
-                        }
-                    }
-
-                    if (!bestFit) {
-                        for (let existingSheet of sheets) {
-                            if (existingSheet.isOffcut) continue;
-
-                            const beforeUsed = existingSheet.pieces.reduce((sum, p) => sum + (p.width * p.height), 0);
-                            const sheetArea = existingSheet.width * existingSheet.height;
-                            const currentEfficiency = (beforeUsed / sheetArea) * 100;
-
-                            if (canPlacePiece(existingSheet, piece)) {
-                                const afterUsed = beforeUsed + (piece.width * piece.height);
-                                const newEfficiency = (afterUsed / sheetArea) * 100;
-
-                                if (newEfficiency > bestEfficiency && newEfficiency < 95) {
-                                    bestEfficiency = newEfficiency;
-                                    bestFit = { type: 'existing', sheet: existingSheet };
-                                }
-                            }
-                        }
-                    }
-
-                    if (!bestFit) {
-                        for (let sheetType of availableSheets) {
-                            if (sheetUsage[sheetType.id] >= sheetType.quantity) continue;
-
-                            const testSheet = {
-                                id: sheets.length + 1,
-                                width: sheetType.width,
-                                height: sheetType.height,
-                                pieces: [],
-                                spaces: [{ x: 0, y: 0, width: sheetType.width, height: sheetType.height }],
-                                isOffcut: false,
-                                sheetTypeId: sheetType.id,
-                                sheetLabel: sheetType.label
-                            };
-
-                            if (canPlacePiece(testSheet, piece)) {
-                                const efficiency = ((piece.width * piece.height) / (sheetType.width * sheetType.height)) * 100;
-
-                                if (efficiency > bestEfficiency || bestFit === null) {
-                                    bestEfficiency = efficiency;
-                                    bestFit = { type: 'new', sheetType, testSheet };
-                                }
-                            }
-                        }
-                    }
-
-                    if (bestFit) {
-                        if (bestFit.type === 'offcut') {
-                            usedOffcuts.push(bestFit.material.id);
-                            tryPlacePiece(bestFit.testSheet, piece);
-                            sheets.push(bestFit.testSheet);
-                            placed = true;
-                        } else if (bestFit.type === 'existing') {
-                            tryPlacePiece(bestFit.sheet, piece);
-                            placed = true;
-                        } else if (bestFit.type === 'new') {
-                            tryPlacePiece(bestFit.testSheet, piece);
-                            sheets.push(bestFit.testSheet);
-                            sheetUsage[bestFit.sheetType.id]++;
-                            placed = true;
-                        }
-                    }
-
-                    if (!placed) {
-                        console.warn('Could not place piece:', piece);
-                    }
-                });
-
-                const newOffcuts = [];
-                sheets.forEach(sheet => {
-                    const usedArea = sheet.pieces.reduce((sum, p) => sum + (p.width * p.height), 0);
-                    const totalArea = sheet.width * sheet.height;
-                    sheet.efficiency = (usedArea / totalArea) * 100;
-                    sheet.wasteArea = totalArea - usedArea;
-
-                    sheet.spaces.forEach(space => {
-                        const spaceArea = space.width * space.height;
-                        const minDimension = Math.min(space.width, space.height);
-
-                        if (minDimension >= minPartSize &&
-                            spaceArea >= (minUsefulWaste * minUsefulWaste)) {
-                            newOffcuts.push({
-                                id: Date.now() + Math.random(),
-                                width: space.width,
-                                height: space.height,
-                                fromSheet: sheet.id,
-                                area: spaceArea
-                            });
-                        }
-                    });
-                });
-
-                setOffcuts([...offcuts.filter(o => !usedOffcuts.includes(o.id)), ...newOffcuts]);
-                setOptimizedLayout(sheets);
-            };
-
-            const canPlacePiece = (sheet, piece) => {
-                const testSheet = JSON.parse(JSON.stringify(sheet));
-                return tryPlacePiece(testSheet, piece, true);
-            };
-
-            const tryPlacePiece = (sheet, piece, testOnly = false) => {
-                for (let i = 0; i < sheet.spaces.length; i++) {
-                    const space = sheet.spaces[i];
-
-                    const cutLengthNormal = Math.max(piece.width, piece.height);
-                    const cutLengthRotated = Math.max(piece.height, piece.width);
-
-                    if (cutLengthNormal <= maxCutLength &&
-                        piece.width + bladeWidth <= space.width &&
-                        piece.height + bladeWidth <= space.height &&
-                        piece.width >= minPartSize &&
-                        piece.height >= minPartSize) {
-
-                        if (!testOnly) {
-                            sheet.pieces.push({
-                                ...piece,
-                                x: space.x,
-                                y: space.y
-                            });
-                            updateSpaces(sheet, i, space, piece.width, piece.height);
-                        }
-                        return true;
-                    }
-
-                    if (cutLengthRotated <= maxCutLength &&
-                        piece.height + bladeWidth <= space.width &&
-                        piece.width + bladeWidth <= space.height &&
-                        piece.height >= minPartSize &&
-                        piece.width >= minPartSize) {
-
-                        if (!testOnly) {
-                            sheet.pieces.push({
-                                ...piece,
-                                x: space.x,
-                                y: space.y,
-                                width: piece.height,
-                                height: piece.width,
-                                rotated: true
-                            });
-                            updateSpaces(sheet, i, space, piece.height, piece.width);
-                        }
-                        return true;
-                    }
-                }
-
-                return false;
-            };
-
-            const updateSpaces = (sheet, spaceIndex, space, usedWidth, usedHeight) => {
-                const newSpaces = [];
-
-                const rightSpace = {
-                    x: space.x + usedWidth + bladeWidth,
-                    y: space.y,
-                    width: space.width - usedWidth - bladeWidth,
-                    height: usedHeight
-                };
-
-                const bottomSpace = {
-                    x: space.x,
-                    y: space.y + usedHeight + bladeWidth,
-                    width: space.width,
-                    height: space.height - usedHeight - bladeWidth
-                };
-
-                if (rightSpace.width >= minPartSize && rightSpace.height >= minPartSize) {
-                    newSpaces.push(rightSpace);
-                }
-
-                if (bottomSpace.width >= minPartSize && bottomSpace.height >= minPartSize) {
-                    newSpaces.push(bottomSpace);
-                }
-
-                sheet.spaces.splice(spaceIndex, 1);
-                sheet.spaces.push(...newSpaces);
-            };
-
-            const colors = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316'];
-
-            const getColorForOrder = (orderId) => {
-                const index = orders.findIndex(o => o.id === orderId);
-                return colors[index % colors.length];
-            };
-
-            const exportToPDF = () => {
-                if (!optimizedLayout) return;
-
-                const pdf = new jsPDF('l', 'mm', 'a4');
-                const pageWidth = pdf.internal.pageSize.getWidth();
-                const pageHeight = pdf.internal.pageSize.getHeight();
-
-                pdf.setFontSize(20);
-                pdf.text('Glass Cutting Plan', pageWidth / 2, 15, { align: 'center' });
-
-                pdf.setFontSize(10);
-                pdf.text(`Date: ${new Date().toLocaleDateString()}`, 15, 25);
-                pdf.text(`Total Sheets: ${optimizedLayout.length}`, 15, 30);
-                pdf.text(`Average Efficiency: ${(optimizedLayout.reduce((sum, s) => sum + s.efficiency, 0) / optimizedLayout.length).toFixed(1)}%`, 15, 35);
-
-                let yOffset = 45;
-
-                optimizedLayout.forEach((sheet, idx) => {
-                    if (idx > 0) {
-                        pdf.addPage();
-                        yOffset = 15;
-                    }
-
-                    pdf.setFontSize(14);
-                    pdf.text(`Sheet ${sheet.id}${sheet.isOffcut ? ' (From Offcut)' : sheet.sheetLabel ? ` (${sheet.sheetLabel})` : ''}`, 15, yOffset);
-                    pdf.setFontSize(10);
-                    pdf.text(`Dimensions: ${convertFromMM(sheet.width).toFixed(1)} × ${convertFromMM(sheet.height).toFixed(1)} ${unit}`, 15, yOffset + 5);
-                    pdf.text(`Efficiency: ${sheet.efficiency.toFixed(1)}%`, 15, yOffset + 10);
-                    pdf.text(`Pieces: ${sheet.pieces.length}`, 15, yOffset + 15);
-
-                    yOffset += 25;
-
-                    const scale = Math.min((pageWidth - 30) / sheet.width, (pageHeight - yOffset - 20) / sheet.height);
-                    const drawWidth = sheet.width * scale;
-                    const drawHeight = sheet.height * scale;
-                    const startX = 15;
-                    const startY = yOffset;
-
-                    pdf.setDrawColor(0);
-                    pdf.setLineWidth(0.5);
-                    pdf.rect(startX, startY, drawWidth, drawHeight);
-
-                    sheet.pieces.forEach((piece, pidx) => {
-                        const px = startX + (piece.x * scale);
-                        const py = startY + (piece.y * scale);
-                        const pw = piece.width * scale;
-                        const ph = piece.height * scale;
-
-                        const color = getColorForOrder(piece.orderId);
-                        const rgb = hexToRgb(color);
-                        pdf.setFillColor(rgb.r, rgb.g, rgb.b);
-                        pdf.rect(px, py, pw, ph, 'FD');
-
-                        pdf.setFontSize(6);
-                        pdf.setTextColor(255, 255, 255);
-                        const text = `${piece.customerName}\n${convertFromMM(piece.rotated ? piece.height : piece.width).toFixed(0)}×${convertFromMM(piece.rotated ? piece.width : piece.height).toFixed(0)}${unit}\n${piece.pieceNum}/${piece.totalPieces}${piece.rotated ? ' ↻' : ''}`;
-                        pdf.text(text, px + pw / 2, py + ph / 2, { align: 'center', baseline: 'middle' });
-                    });
-
-                    pdf.setTextColor(0, 0, 0);
-                    yOffset += drawHeight + 10;
-
-                    pdf.setFontSize(9);
-                    let listY = yOffset;
-                    pdf.text('Cutting List:', startX, listY);
-                    listY += 5;
-
-                    sheet.pieces.forEach((piece, idx) => {
-                        if (listY > pageHeight - 20) {
-                            pdf.addPage();
-                            listY = 15;
-                        }
-                        const pieceText = `${idx + 1}. ${piece.customerName} - ${convertFromMM(piece.rotated ? piece.height : piece.width).toFixed(1)}×${convertFromMM(piece.rotated ? piece.width : piece.height).toFixed(1)}${unit} (${piece.pieceNum}/${piece.totalPieces})${piece.rotated ? ' [ROTATED]' : ''}`;
-                        pdf.text(pieceText, startX + 5, listY);
-                        listY += 5;
-                    });
-                });
-
-                pdf.save('glass-cutting-plan.pdf');
-            };
-
-            const hexToRgb = (hex) => {
-                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                return result ? {
-                    r: parseInt(result[1], 16),
-                    g: parseInt(result[2], 16),
-                    b: parseInt(result[3], 16)
-                } : { r: 0, g: 0, b: 0 };
-            };
-
-            const totalPieces = orders.reduce((sum, o) => sum + o.quantity, 0);
-            const totalArea = orders.reduce((sum, o) => sum + (o.width * o.height * o.quantity), 0);
-
-            return (
-                <div className="min-h-screen bg-gray-50">
-                    <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-6 shadow-lg no-print">
-                        <div className="max-w-7xl mx-auto">
-                            <h1 className="text-3xl font-bold flex items-center gap-3">
-                                <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 16a1 1 0 011-1h4a1 1 0 011 1v3a1 1 0 01-1 1H5a1 1 0 01-1-1v-3zM14 16a1 1 0 011-1h4a1 1 0 011 1v3a1 1 0 01-1 1h-4a1 1 0 01-1-1v-3z" />
-                                </svg>
-                                Glass Cutting Optimizer Pro
-                            </h1>
-                            <p className="mt-2 text-indigo-100">Professional cutting optimization with multi-sheet support</p>
-                        </div>
-                    </div>
-
-                    <div className="max-w-7xl mx-auto p-6">
-                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                            <div className="lg:col-span-1 space-y-6 no-print">
-                                <div className="bg-white rounded-xl shadow-md p-6">
-                                    <div className="flex justify-between items-center mb-4">
-                                        <h2 className="text-xl font-bold text-gray-800">Settings</h2>
-                                        <button
-                                            onClick={() => setShowSettings(!showSettings)}
-                                            className="text-indigo-600 hover:text-indigo-700"
-                                        >
-                                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                            </svg>
-                                        </button>
-                                    </div>
-
-                                    <div className="space-y-4">
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Unit</label>
-                                            <select
-                                                value={unit}
-                                                onChange={(e) => setUnit(e.target.value)}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                            >
-                                                <option value="mm">Millimeters (mm)</option>
-                                                <option value="cm">Centimeters (cm)</option>
-                                                <option value="in">Inches (in)</option>
-                                                <option value="m">Meters (m)</option>
-                                            </select>
-                                        </div>
-
-                                        {showSettings && (
-                                            <>
-                                                <div>
-                                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                        Blade Width ({unit})
-                                                    </label>
-                                                    <input
-                                                        type="number"
-                                                        value={convertFromMM(bladeWidth).toFixed(2)}
-                                                        onChange={(e) => {
-                                                            setBladeWidth(convertToMM(parseFloat(e.target.value) || 0));
-                                                            setOptimizedLayout(null);
-                                                        }}
-                                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                        Max Cut Length ({unit})
-                                                    </label>
-                                                    <input
-                                                        type="number"
-                                                        value={convertFromMM(maxCutLength).toFixed(2)}
-                                                        onChange={(e) => {
-                                                            setMaxCutLength(convertToMM(parseFloat(e.target.value) || 0));
-                                                            setOptimizedLayout(null);
-                                                        }}
-                                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                                    />
-                                                    <p className="text-xs text-gray-500 mt-1">For manual cutting limitations</p>
-                                                </div>
-                                                <div>
-                                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                        Min Useful Waste ({unit})
-                                                    </label>
-                                                    <input
-                                                        type="number"
-                                                        value={convertFromMM(minUsefulWaste).toFixed(2)}
-                                                        onChange={(e) => {
-                                                            setMinUsefulWaste(convertToMM(parseFloat(e.target.value) || 0));
-                                                            setOptimizedLayout(null);
-                                                        }}
-                                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                                    />
-                                                    <p className="text-xs text-gray-500 mt-1">Smaller waste becomes garbage</p>
-                                                </div>
-                                                <div>
-                                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                        Min Part Size ({unit})
-                                                    </label>
-                                                    <input
-                                                        type="number"
-                                                        value={convertFromMM(minPartSize).toFixed(2)}
-                                                        onChange={(e) => {
-                                                            setMinPartSize(convertToMM(parseFloat(e.target.value) || 0));
-                                                            setOptimizedLayout(null);
-                                                        }}
-                                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                                    />
-                                                    <p className="text-xs text-gray-500 mt-1">Prevents breakable parts</p>
-                                                </div>
-                                            </>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div className="bg-white rounded-xl shadow-md p-6">
-                                    <h2 className="text-xl font-bold text-gray-800 mb-4">Available Sheets</h2>
-                                    <div className="space-y-3 mb-4">
-                                        <input
-                                            type="text"
-                                            placeholder="Label (optional)"
-                                            value={newSheet.label}
-                                            onChange={(e) => setNewSheet({ ...newSheet, label: e.target.value })}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                        />
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <input
-                                                type="number"
-                                                placeholder={`Width (${unit})`}
-                                                value={newSheet.width}
-                                                onChange={(e) => setNewSheet({ ...newSheet, width: e.target.value })}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                            />
-                                            <input
-                                                type="number"
-                                                placeholder={`Height (${unit})`}
-                                                value={newSheet.height}
-                                                onChange={(e) => setNewSheet({ ...newSheet, height: e.target.value })}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                            />
-                                        </div>
-                                        <input
-                                            type="number"
-                                            placeholder="Quantity (999 = unlimited)"
-                                            value={newSheet.quantity}
-                                            onChange={(e) => setNewSheet({ ...newSheet, quantity: e.target.value })}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                        />
-                                        <button
-                                            onClick={addSheet}
-                                            className="w-full bg-purple-600 hover:bg-purple-700 text-white font-medium py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
-                                        >
-                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                                            </svg>
-                                            Add Sheet Size
-                                        </button>
-                                    </div>
-
-                                    <div className="space-y-2 max-h-64 overflow-y-auto">
-                                        {availableSheets.map((sheet) => (
-                                            <div key={sheet.id} className="flex items-center justify-between p-3 bg-purple-50 rounded-lg">
-                                                <div>
-                                                    <div className="font-medium text-gray-800">{sheet.label}</div>
-                                                    <div className="text-sm text-gray-600">
-                                                        {convertFromMM(sheet.width).toFixed(1)} × {convertFromMM(sheet.height).toFixed(1)} {unit}
-                                                    </div>
-                                                    <div className="text-xs text-gray-500">
-                                                        Qty: {sheet.quantity === 999 ? 'Unlimited' : sheet.quantity}
-                                                    </div>
-                                                </div>
-                                                <button
-                                                    onClick={() => removeSheet(sheet.id)}
-                                                    className="text-red-600 hover:text-red-700 p-2"
-                                                >
-                                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                                    </svg>
-                                                </button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                <div className="bg-white rounded-xl shadow-md p-6">
-                                    <h2 className="text-xl font-bold text-gray-800 mb-4">Add Customer Order</h2>
-                                    <div className="space-y-3">
-                                        <input
-                                            type="text"
-                                            placeholder="Customer Name *"
-                                            value={newOrder.customerName}
-                                            onChange={(e) => setNewOrder({ ...newOrder, customerName: e.target.value })}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                        />
-                                        <div className="grid grid-cols-2 gap-3">
-                                            <input
-                                                type="number"
-                                                placeholder={`Width (${unit})`}
-                                                value={newOrder.width}
-                                                onChange={(e) => setNewOrder({ ...newOrder, width: e.target.value })}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                            />
-                                            <input
-                                                type="number"
-                                                placeholder={`Height (${unit})`}
-                                                value={newOrder.height}
-                                                onChange={(e) => setNewOrder({ ...newOrder, height: e.target.value })}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                            />
-                                        </div>
-                                        <input
-                                            type="number"
-                                            placeholder="Quantity"
-                                            value={newOrder.quantity}
-                                            onChange={(e) => setNewOrder({ ...newOrder, quantity: e.target.value })}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                        />
-                                        <button
-                                            onClick={addOrder}
-                                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
-                                        >
-                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                                            </svg>
-                                            Add Order
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {offcuts.length > 0 && (
-                                    <div className="bg-white rounded-xl shadow-md p-6">
-                                        <h2 className="text-xl font-bold text-gray-800 mb-4">Offcuts Inventory ({offcuts.length})</h2>
-                                        <div className="space-y-2 max-h-64 overflow-y-auto">
-                                            {offcuts.map((offcut) => (
-                                                <div key={offcut.id} className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
-                                                    <div>
-                                                        <div className="font-medium text-gray-800">
-                                                            {convertFromMM(offcut.width).toFixed(1)} × {convertFromMM(offcut.height).toFixed(1)} {unit}
-                                                        </div>
-                                                        <div className="text-sm text-gray-600">
-                                                            Area: {(offcut.area / 1000000).toFixed(2)} m²
-                                                        </div>
-                                                    </div>
-                                                    <button
-                                                        onClick={() => removeOffcut(offcut.id)}
-                                                        className="text-red-600 hover:text-red-700 p-2"
-                                                    >
-                                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                                        </svg>
-                                                    </button>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-
-                                {orders.length > 0 && (
-                                    <div className="bg-white rounded-xl shadow-md p-6">
-                                        <h2 className="text-xl font-bold text-gray-800 mb-4">Orders ({orders.length})</h2>
-                                        <div className="space-y-2 max-h-96 overflow-y-auto">
-                                            {orders.map((order, idx) => (
-                                                <div key={order.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                                                    <div className="flex items-center gap-3">
-                                                        <div
-                                                            className="w-4 h-4 rounded"
-                                                            style={{ backgroundColor: getColorForOrder(order.id) }}
-                                                        ></div>
-                                                        <div>
-                                                            <div className="font-medium text-gray-800">{order.customerName}</div>
-                                                            <div className="text-sm text-gray-600">
-                                                                {convertFromMM(order.width).toFixed(1)} × {convertFromMM(order.height).toFixed(1)} {unit} × {order.quantity}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                    <button
-                                                        onClick={() => removeOrder(order.id)}
-                                                        className="text-red-600 hover:text-red-700 p-2"
-                                                    >
-                                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                                        </svg>
-                                                    </button>
-                                                </div>
-                                            ))}
-                                        </div>
-                                        <div className="mt-4 pt-4 border-t border-gray-200">
-                                            <div className="text-sm text-gray-600">
-                                                Total Pieces: <span className="font-semibold">{totalPieces}</span>
-                                            </div>
-                                            <div className="text-sm text-gray-600">
-                                                Total Area: <span className="font-semibold">{(totalArea / 1000000).toFixed(2)} m²</span>
-                                            </div>
-                                        </div>
-                                        <button
-                                            onClick={optimizeCutting}
-                                            disabled={orders.length === 0}
-                                            className="w-full mt-4 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white font-bold py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
-                                        >
-                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
-                                            </svg>
-                                            Optimize Layout
-                                        </button>
-                                        {optimizedLayout && (
-                                            <button
-                                                onClick={exportToPDF}
-                                                className="w-full mt-2 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
-                                            >
-                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                                </svg>
-                                                Export to PDF
-                                            </button>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="lg:col-span-2" ref={layoutRef}>
-                                {!optimizedLayout && orders.length === 0 && (
-                                    <div className="bg-white rounded-xl shadow-md p-12 text-center no-print">
-                                        <svg className="w-24 h-24 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 16a1 1 0 011-1h4a1 1 0 011 1v3a1 1 0 01-1 1H5a1 1 0 01-1-1v-3zM14 16a1 1 0 011-1h4a1 1 0 011 1v3a1 1 0 01-1 1h-4a1 1 0 01-1-1v-3z" />
-                                        </svg>
-                                        <h3 className="text-xl font-semibold text-gray-700 mb-2">No Orders Yet</h3>
-                                        <p className="text-gray-500">Add customer orders to start optimizing your glass cutting layout</p>
-                                    </div>
-                                )}
-
-                                {!optimizedLayout && orders.length > 0 && (
-                                    <div className="bg-white rounded-xl shadow-md p-12 text-center no-print">
-                                        <svg className="w-24 h-24 mx-auto text-indigo-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                                        </svg>
-                                        <h3 className="text-xl font-semibold text-gray-700 mb-2">Ready to Optimize</h3>
-                                        <p className="text-gray-500">Click "Optimize Layout" to generate your cutting plan</p>
-                                    </div>
-                                )}
-
-                                {optimizedLayout && (
-                                    <div className="space-y-6">
-                                        <div className="bg-white rounded-xl shadow-md p-6 no-print">
-                                            <h2 className="text-xl font-bold text-gray-800 mb-4">Optimization Results</h2>
-                                            <div className="grid grid-cols-3 gap-4">
-                                                <div className="bg-blue-50 p-4 rounded-lg">
-                                                    <div className="text-sm text-gray-600">Sheets Used</div>
-                                                    <div className="text-2xl font-bold text-blue-600">{optimizedLayout.length}</div>
-                                                </div>
-                                                <div className="bg-green-50 p-4 rounded-lg">
-                                                    <div className="text-sm text-gray-600">Avg Efficiency</div>
-                                                    <div className="text-2xl font-bold text-green-600">
-                                                        {(optimizedLayout.reduce((sum, s) => sum + s.efficiency, 0) / optimizedLayout.length).toFixed(1)}%
-                                                    </div>
-                                                </div>
-                                                <div className="bg-red-50 p-4 rounded-lg">
-                                                    <div className="text-sm text-gray-600">Total Waste</div>
-                                                    <div className="text-2xl font-bold text-red-600">
-                                                        {(optimizedLayout.reduce((sum, s) => sum + s.wasteArea, 0) / 1000000).toFixed(2)} m²
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {optimizedLayout.map((sheet, idx) => (
-                                            <div key={idx} className="bg-white rounded-xl shadow-md p-6">
-                                                <div className="flex justify-between items-center mb-4">
-                                                    <h3 className="text-lg font-bold text-gray-800">
-                                                        Sheet {sheet.id}
-                                                        {sheet.isOffcut && <span className="text-sm text-green-600 ml-2">(From Offcut)</span>}
-                                                        {sheet.sheetLabel && <span className="text-sm text-purple-600 ml-2">({sheet.sheetLabel})</span>}
-                                                    </h3>
-                                                    <div className="text-sm text-gray-600">
-                                                        Efficiency: <span className="font-semibold text-green-600">{sheet.efficiency.toFixed(1)}%</span>
-                                                    </div>
-                                                </div>
-                                                <div className="border-2 border-gray-300 rounded-lg overflow-hidden bg-gray-100" style={{ aspectRatio: `${sheet.width}/${sheet.height}` }}>
-                                                    <div className="relative w-full h-full">
-                                                        {sheet.pieces.map((piece, pidx) => {
-                                                            const scaleX = 100 / sheet.width;
-                                                            const scaleY = 100 / sheet.height;
-                                                            return (
-                                                                <div
-                                                                    key={pidx}
-                                                                    className="absolute border-2 border-white flex flex-col items-center justify-center text-white text-xs font-semibold shadow-md overflow-hidden"
-                                                                    style={{
-                                                                        left: `${piece.x * scaleX}%`,
-                                                                        top: `${piece.y * scaleY}%`,
-                                                                        width: `${piece.width * scaleX}%`,
-                                                                        height: `${piece.height * scaleY}%`,
-                                                                        backgroundColor: getColorForOrder(piece.orderId)
-                                                                    }}
-                                                                    title={`${piece.customerName} - ${convertFromMM(piece.rotated ? piece.height : piece.width).toFixed(1)}×${convertFromMM(piece.rotated ? piece.width : piece.height).toFixed(1)}${unit}${piece.rotated ? ' (rotated)' : ''}`}
-                                                                >
-                                                                    <div className="text-center px-1">
-                                                                        <div className="font-bold">{piece.customerName}</div>
-                                                                        <div className="text-xs">{convertFromMM(piece.rotated ? piece.height : piece.width).toFixed(0)}×{convertFromMM(piece.rotated ? piece.width : piece.height).toFixed(0)}{unit}</div>
-                                                                        <div className="text-xs">{piece.pieceNum}/{piece.totalPieces}</div>
-                                                                        {piece.rotated && <div className="text-xs">↻ ROTATED</div>}
-                                                                    </div>
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                </div>
-                                                <div className="mt-3 text-sm text-gray-600">
-                                                    Sheet: {convertFromMM(sheet.width).toFixed(1)} × {convertFromMM(sheet.height).toFixed(1)} {unit} |
-                                                    Pieces: {sheet.pieces.length} |
-                                                    Waste: {(sheet.wasteArea / 1000000).toFixed(2)} m²
-                                                </div>
-
-                                                <div className="mt-4 border-t pt-4">
-                                                    <h4 className="font-semibold text-gray-700 mb-2">Cutting List:</h4>
-                                                    <div className="grid grid-cols-1 gap-1">
-                                                        {sheet.pieces.map((piece, idx) => (
-                                                            <div key={idx} className="text-sm text-gray-600 flex items-center gap-2">
-                                                                <div
-                                                                    className="w-3 h-3 rounded"
-                                                                    style={{ backgroundColor: getColorForOrder(piece.orderId) }}
-                                                                ></div>
-                                                                <span>
-                                                                    {idx + 1}. <span className="font-medium">{piece.customerName}</span> -
-                                                                    {convertFromMM(piece.rotated ? piece.height : piece.width).toFixed(1)}×
-                                                                    {convertFromMM(piece.rotated ? piece.width : piece.height).toFixed(1)}{unit}
-                                                                    ({piece.pieceNum}/{piece.totalPieces})
-                                                                    {piece.rotated && <span className="text-orange-600 font-semibold"> [ROTATED 90°]</span>}
-                                                                </span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            );
+  <div id="root"></div>
+  
+  <script type="text/babel">
+    const { useState } = React;
+
+    // Lucide icons as inline SVG components
+    const Plus = () => (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+      </svg>
+    );
+
+    const Trash2 = () => (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <polyline points="3 6 5 6 21 6"></polyline>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+        <line x1="10" y1="11" x2="10" y2="17"></line>
+        <line x1="14" y1="11" x2="14" y2="17"></line>
+      </svg>
+    );
+
+    const Settings = () => (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3"></path>
+      </svg>
+    );
+
+    const Save = () => (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+        <polyline points="17 21 17 13 7 13 7 21"></polyline>
+        <polyline points="7 3 7 8 15 8"></polyline>
+      </svg>
+    );
+
+    const Download = () => (
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="7 10 12 15 17 10"></polyline>
+        <line x1="12" y1="15" x2="12" y2="3"></line>
+      </svg>
+    );
+
+    const GlassOptimizer = () => {
+      const [unit, setUnit] = useState('mm');
+      const [maxCutLength, setMaxCutLength] = useState(3000);
+      const [minUsefulWaste, setMinUsefulWaste] = useState(300);
+      const [minBreakableSize, setMinBreakableSize] = useState(100);
+      const [stockPanels, setStockPanels] = useState([
+        { id: 1, width: 2440, height: 3660, quantity: 10 }
+      ]);
+      const [cutPieces, setCutPieces] = useState([]);
+      const [optimizedLayouts, setOptimizedLayouts] = useState([]);
+      const [offcuts, setOffcuts] = useState([]);
+      const [showSettings, setShowSettings] = useState(false);
+
+      const unitConversions = { mm: 1, cm: 10, inches: 25.4, feet: 304.8 };
+      const convertFromMM = (value) => value / unitConversions[unit];
+
+      const addStockPanel = () => {
+        setStockPanels([...stockPanels, { id: Date.now(), width: 2440, height: 3660, quantity: 1 }]);
+      };
+
+      const updateStockPanel = (id, field, value) => {
+        setStockPanels(stockPanels.map(panel =>
+          panel.id === id ? { ...panel, [field]: parseFloat(value) || 0 } : panel
+        ));
+      };
+
+      const deleteStockPanel = (id) => {
+        setStockPanels(stockPanels.filter(panel => panel.id !== id));
+      };
+
+      const addCutPiece = () => {
+        setCutPieces([...cutPieces, { id: Date.now(), width: 500, height: 500, quantity: 1, customer: '' }]);
+      };
+
+      const updateCutPiece = (id, field, value) => {
+        setCutPieces(cutPieces.map(piece =>
+          piece.id === id ? { ...piece, [field]: field === 'customer' ? value : (parseFloat(value) || 0) } : piece
+        ));
+      };
+
+      const deleteCutPiece = (id) => {
+        setCutPieces(cutPieces.filter(piece => piece.id !== id));
+      };
+
+      const optimizeCuts = () => {
+        if (cutPieces.length === 0 || stockPanels.length === 0) {
+          alert('Please add stock panels and cut pieces first');
+          return;
         }
 
-        ReactDOM.render(<GlassCuttingOptimizer />, document.getElementById('root'));
-    </script>
-</body>
+        const layouts = [];
+        const newOffcuts = [];
+        let remainingPieces = [];
+        
+        cutPieces.forEach(piece => {
+          for (let i = 0; i < piece.quantity; i++) {
+            remainingPieces.push({ ...piece, uniqueId: `${piece.id}-${i}`, originalId: piece.id });
+          }
+        });
 
+        remainingPieces.sort((a, b) => (b.width * b.height) - (a.width * a.height));
+
+        let panelIndex = 0;
+        let stockPanelPool = [];
+        
+        stockPanels.forEach(panel => {
+          for (let i = 0; i < panel.quantity; i++) {
+            stockPanelPool.push({ ...panel, usedPanelId: `panel-${panelIndex++}` });
+          }
+        });
+
+        for (const stockPanel of stockPanelPool) {
+          if (remainingPieces.length === 0) break;
+
+          const layout = {
+            id: stockPanel.usedPanelId,
+            stockWidth: stockPanel.width,
+            stockHeight: stockPanel.height,
+            pieces: [],
+            waste: 0
+          };
+
+          const freeRectangles = [{ x: 0, y: 0, width: stockPanel.width, height: stockPanel.height }];
+
+          while (freeRectangles.length > 0 && remainingPieces.length > 0) {
+            let bestFit = null;
+            let bestPieceIndex = -1;
+            let bestRectIndex = -1;
+            let bestRotated = false;
+
+            for (let r = 0; r < freeRectangles.length; r++) {
+              const rect = freeRectangles[r];
+              
+              for (let p = 0; p < remainingPieces.length; p++) {
+                const piece = remainingPieces[p];
+                
+                if (piece.width <= rect.width && piece.height <= rect.height) {
+                  const fit = (rect.width * rect.height) - (piece.width * piece.height);
+                  if (bestFit === null || fit < bestFit) {
+                    bestFit = fit;
+                    bestPieceIndex = p;
+                    bestRectIndex = r;
+                    bestRotated = false;
+                  }
+                }
+                
+                if (piece.height <= rect.width && piece.width <= rect.height) {
+                  const fit = (rect.width * rect.height) - (piece.height * piece.width);
+                  if (bestFit === null || fit < bestFit) {
+                    bestFit = fit;
+                    bestPieceIndex = p;
+                    bestRectIndex = r;
+                    bestRotated = true;
+                  }
+                }
+              }
+            }
+
+            if (bestPieceIndex === -1) break;
+
+            const piece = remainingPieces[bestPieceIndex];
+            const rect = freeRectangles[bestRectIndex];
+            
+            const placedWidth = bestRotated ? piece.height : piece.width;
+            const placedHeight = bestRotated ? piece.width : piece.height;
+
+            if (placedWidth > maxCutLength || placedHeight > maxCutLength) {
+              remainingPieces.splice(bestPieceIndex, 1);
+              continue;
+            }
+
+            layout.pieces.push({
+              x: rect.x,
+              y: rect.y,
+              width: placedWidth,
+              height: placedHeight,
+              customer: piece.customer,
+              rotated: bestRotated,
+              originalWidth: piece.width,
+              originalHeight: piece.height
+            });
+
+            freeRectangles.splice(bestRectIndex, 1);
+            
+            if (rect.x + placedWidth < rect.x + rect.width) {
+              freeRectangles.push({
+                x: rect.x + placedWidth,
+                y: rect.y,
+                width: rect.width - placedWidth,
+                height: placedHeight
+              });
+            }
+            
+            if (rect.y + placedHeight < rect.y + rect.height) {
+              freeRectangles.push({
+                x: rect.x,
+                y: rect.y + placedHeight,
+                width: rect.width,
+                height: rect.height - placedHeight
+              });
+            }
+
+            remainingPieces.splice(bestPieceIndex, 1);
+          }
+
+          const usedArea = layout.pieces.reduce((sum, p) => sum + (p.width * p.height), 0);
+          const totalArea = stockPanel.width * stockPanel.height;
+          layout.waste = ((totalArea - usedArea) / totalArea * 100).toFixed(2);
+
+          freeRectangles.forEach(rect => {
+            if (rect.width >= minUsefulWaste && rect.height >= minUsefulWaste &&
+                rect.width >= minBreakableSize && rect.height >= minBreakableSize) {
+              newOffcuts.push({
+                width: Math.round(rect.width),
+                height: Math.round(rect.height),
+                area: Math.round(rect.width * rect.height)
+              });
+            }
+          });
+
+          if (layout.pieces.length > 0) {
+            layouts.push(layout);
+          }
+        }
+
+        if (remainingPieces.length > 0) {
+          alert(`Warning: ${remainingPieces.length} pieces could not be fitted. Please add more stock panels or adjust dimensions.`);
+        }
+
+        setOptimizedLayouts(layouts);
+        setOffcuts(newOffcuts);
+      };
+
+      const drawLayout = (layout, canvas) => {
+        const ctx = canvas.getContext('2d');
+        const padding = 40;
+        const scale = Math.min(
+          (canvas.width - padding * 2) / layout.stockWidth,
+          (canvas.height - padding * 2) / layout.stockHeight
+        );
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(padding, padding, layout.stockWidth * scale, layout.stockHeight * scale);
+
+        const colors = ['#FFB6C1', '#87CEEB', '#98FB98', '#DDA0DD', '#F0E68C', '#FFE4B5'];
+        
+        layout.pieces.forEach((piece, idx) => {
+          const x = padding + piece.x * scale;
+          const y = padding + piece.y * scale;
+          const w = piece.width * scale;
+          const h = piece.height * scale;
+
+          ctx.fillStyle = colors[idx % colors.length];
+          ctx.fillRect(x, y, w, h);
+
+          ctx.strokeStyle = '#333333';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x, y, w, h);
+
+          ctx.fillStyle = '#000000';
+          ctx.font = 'bold 12px Arial';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          
+          const labelY = y + h / 2;
+          const customer = piece.customer || 'No Customer';
+          const size = `${convertFromMM(piece.originalWidth).toFixed(1)} × ${convertFromMM(piece.originalHeight).toFixed(1)} ${unit}`;
+          const rotated = piece.rotated ? ' (R)' : '';
+          
+          ctx.fillText(customer, x + w / 2, labelY - 10);
+          ctx.fillText(size + rotated, x + w / 2, labelY + 10);
+        });
+
+        ctx.fillStyle = '#000000';
+        ctx.font = '14px Arial';
+        ctx.fillText(`${convertFromMM(layout.stockWidth).toFixed(1)} × ${convertFromMM(layout.stockHeight).toFixed(1)} ${unit}`, 
+          padding + (layout.stockWidth * scale) / 2, padding - 15);
+        ctx.fillText(`Waste: ${layout.waste}%`, padding + (layout.stockWidth * scale) / 2, canvas.height - 10);
+      };
+
+      const exportToPDF = () => {
+        if (optimizedLayouts.length === 0) {
+          alert('Please optimize cuts first');
+          return;
+        }
+
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        const margin = 15;
+        let yPosition = margin;
+
+        // Title page
+        pdf.setFontSize(24);
+        pdf.setFont(undefined, 'bold');
+        pdf.text('Glass Cutting Optimization Plan', pageWidth / 2, yPosition, { align: 'center' });
+        
+        yPosition += 15;
+        pdf.setFontSize(12);
+        pdf.setFont(undefined, 'normal');
+        pdf.text(`Generated: ${new Date().toLocaleString()}`, margin, yPosition);
+        yPosition += 7;
+        pdf.text(`Unit: ${unit}`, margin, yPosition);
+        yPosition += 15;
+
+        // Summary statistics
+        pdf.setFontSize(14);
+        pdf.setFont(undefined, 'bold');
+        pdf.text('Summary', margin, yPosition);
+        yPosition += 10;
+        
+        pdf.setFontSize(11);
+        pdf.setFont(undefined, 'normal');
+        pdf.text(`Total Panels Used: ${optimizedLayouts.length}`, margin, yPosition);
+        yPosition += 7;
+        
+        const avgWaste = (optimizedLayouts.reduce((sum, l) => sum + parseFloat(l.waste), 0) / optimizedLayouts.length).toFixed(2);
+        pdf.text(`Average Waste: ${avgWaste}%`, margin, yPosition);
+        yPosition += 7;
+        
+        pdf.text(`Total Cut Pieces: ${optimizedLayouts.reduce((sum, l) => sum + l.pieces.length, 0)}`, margin, yPosition);
+        yPosition += 7;
+        
+        pdf.text(`Offcuts Generated: ${offcuts.length}`, margin, yPosition);
+        yPosition += 15;
+
+        // Process each layout
+        optimizedLayouts.forEach((layout, idx) => {
+          if (idx > 0) {
+            pdf.addPage();
+            yPosition = margin;
+          }
+
+          // Panel header
+          pdf.setFontSize(16);
+          pdf.setFont(undefined, 'bold');
+          pdf.text(`Panel ${idx + 1} - Waste: ${layout.waste}%`, margin, yPosition);
+          yPosition += 10;
+
+          // Draw layout on canvas
+          const canvas = document.createElement('canvas');
+          canvas.width = 800;
+          canvas.height = 600;
+          drawLayout(layout, canvas);
+          
+          // Add canvas image to PDF
+          const imgData = canvas.toDataURL('image/png');
+          const imgWidth = pageWidth - (margin * 2);
+          const imgHeight = (canvas.height / canvas.width) * imgWidth;
+          
+          pdf.addImage(imgData, 'PNG', margin, yPosition, imgWidth, imgHeight);
+          yPosition += imgHeight + 10;
+
+          // Check if we need a new page for the table
+          if (yPosition + (layout.pieces.length * 8) + 20 > pageHeight - margin) {
+            pdf.addPage();
+            yPosition = margin;
+          }
+
+          // Pieces table
+          pdf.setFontSize(12);
+          pdf.setFont(undefined, 'bold');
+          pdf.text('Pieces:', margin, yPosition);
+          yPosition += 8;
+
+          pdf.setFontSize(10);
+          pdf.setFont(undefined, 'bold');
+          
+          // Table headers
+          const col1 = margin;
+          const col2 = margin + 60;
+          const col3 = margin + 120;
+          
+          pdf.text('Customer', col1, yPosition);
+          pdf.text('Size', col2, yPosition);
+          pdf.text('Rotated', col3, yPosition);
+          yPosition += 7;
+
+          // Table rows
+          pdf.setFont(undefined, 'normal');
+          layout.pieces.forEach(piece => {
+            if (yPosition > pageHeight - margin) {
+              pdf.addPage();
+              yPosition = margin;
+            }
+            
+            pdf.text(piece.customer || 'No Customer', col1, yPosition);
+            pdf.text(`${convertFromMM(piece.originalWidth).toFixed(1)} × ${convertFromMM(piece.originalHeight).toFixed(1)} ${unit}`, col2, yPosition);
+            pdf.text(piece.rotated ? 'Yes' : 'No', col3, yPosition);
+            yPosition += 6;
+          });
+        });
+
+        // Offcuts page
+        if (offcuts.length > 0) {
+          pdf.addPage();
+          yPosition = margin;
+
+          pdf.setFontSize(16);
+          pdf.setFont(undefined, 'bold');
+          pdf.text(`Offcuts Inventory (${offcuts.length} pieces)`, margin, yPosition);
+          yPosition += 12;
+
+          pdf.setFontSize(10);
+          pdf.setFont(undefined, 'bold');
+          
+          const col1 = margin;
+          const col2 = margin + 50;
+          const col3 = margin + 100;
+          
+          pdf.text('Width', col1, yPosition);
+          pdf.text('Height', col2, yPosition);
+          pdf.text('Area', col3, yPosition);
+          yPosition += 7;
+
+          pdf.setFont(undefined, 'normal');
+          offcuts.forEach(offcut => {
+            if (yPosition > pageHeight - margin) {
+              pdf.addPage();
+              yPosition = margin;
+            }
+            
+            pdf.text(`${convertFromMM(offcut.width).toFixed(1)} ${unit}`, col1, yPosition);
+            pdf.text(`${convertFromMM(offcut.height).toFixed(1)} ${unit}`, col2, yPosition);
+            pdf.text(`${(convertFromMM(offcut.width) * convertFromMM(offcut.height)).toFixed(2)} ${unit}²`, col3, yPosition);
+            yPosition += 6;
+          });
+        }
+
+        // Save PDF
+        pdf.save(`glass-cutting-plan-${Date.now()}.pdf`);
+      };
+
+      return (
+        <div className="w-full h-screen overflow-auto p-6 bg-gray-50">
+          <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <h1 className="text-3xl font-bold text-gray-800 mb-2">Glass Cutting Optimizer</h1>
+            <p className="text-gray-600">AI-powered cutting optimization for glass industry</p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold text-gray-800">Stock Panels</h2>
+                <button onClick={addStockPanel} className="flex items-center gap-2 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+                  <Plus /> Add Panel
+                </button>
+              </div>
+              <div className="space-y-3">
+                {stockPanels.map(panel => (
+                  <div key={panel.id} className="flex gap-2 items-center bg-gray-50 p-3 rounded">
+                    <span className="text-sm font-medium whitespace-nowrap">Width:</span>
+                    <input type="number" value={panel.width} onChange={(e) => updateStockPanel(panel.id, 'width', e.target.value)} className="w-24 px-2 py-1 border rounded" />
+                    <span className="text-sm font-medium whitespace-nowrap">Height:</span>
+                    <input type="number" value={panel.height} onChange={(e) => updateStockPanel(panel.id, 'height', e.target.value)} className="w-24 px-2 py-1 border rounded" />
+                    <span className="text-sm font-medium whitespace-nowrap">Qty:</span>
+                    <input type="number" value={panel.quantity} onChange={(e) => updateStockPanel(panel.id, 'quantity', e.target.value)} className="w-20 px-2 py-1 border rounded" />
+                    <button onClick={() => deleteStockPanel(panel.id)} className="text-red-500 hover:text-red-700 ml-auto">
+                      <Trash2 />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold text-gray-800">Cut Pieces</h2>
+                <button onClick={addCutPiece} className="flex items-center gap-2 bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">
+                  <Plus /> Add Piece
+                </button>
+              </div>
+              <div className="space-y-3">
+                {cutPieces.map(piece => (
+                  <div key={piece.id} className="flex gap-2 items-center bg-gray-50 p-3 rounded">
+                    <span className="text-sm font-medium whitespace-nowrap">W:</span>
+                    <input type="number" value={piece.width} onChange={(e) => updateCutPiece(piece.id, 'width', e.target.value)} className="w-20 px-2 py-1 border rounded" />
+                    <span className="text-sm font-medium whitespace-nowrap">H:</span>
+                    <input type="number" value={piece.height} onChange={(e) => updateCutPiece(piece.id, 'height', e.target.value)} className="w-20 px-2 py-1 border rounded" />
+                    <span className="text-sm font-medium whitespace-nowrap">Q:</span>
+                    <input type="number" value={piece.quantity} onChange={(e) => updateCutPiece(piece.id, 'quantity', e.target.value)} className="w-16 px-2 py-1 border rounded" />
+                    <span className="text-sm font-medium whitespace-nowrap">Customer:</span>
+                    <input type="text" value={piece.customer} onChange={(e) => updateCutPiece(piece.id, 'customer', e.target.value)} className="flex-1 px-2 py-1 border rounded" placeholder="Name" />
+                    <button onClick={() => deleteCutPiece(piece.id)} className="text-red-500 hover:text-red-700">
+                      <Trash2 />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <button onClick={() => setShowSettings(!showSettings)} className="flex items-center gap-2 text-lg font-bold text-gray-800 mb-4">
+              <Settings /> Settings {showSettings ? '▼' : '▶'}
+            </button>
+            
+            {showSettings && (
+              <div className="flex flex-wrap gap-4 items-end">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Unit:</label>
+                  <select value={unit} onChange={(e) => setUnit(e.target.value)} className="px-3 py-2 border rounded">
+                    <option value="mm">mm</option>
+                    <option value="cm">cm</option>
+                    <option value="inches">inches</option>
+                    <option value="feet">feet</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Max Cut Length ({unit}):</label>
+                  <input type="number" value={maxCutLength} onChange={(e) => setMaxCutLength(parseFloat(e.target.value) || 0)} className="w-32 px-3 py-2 border rounded" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Min Useful Waste ({unit}):</label>
+                  <input type="number" value={minUsefulWaste} onChange={(e) => setMinUsefulWaste(parseFloat(e.target.value) || 0)} className="w-32 px-3 py-2 border rounded" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Min Breakable Size ({unit}):</label>
+                  <input type="number" value={minBreakableSize} onChange={(e) => setMinBreakableSize(parseFloat(e.target.value) || 0)} className="w-32 px-3 py-2 border rounded" />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-4 mb-6">
+            <button onClick={optimizeCuts} className="flex items-center gap-2 bg-purple-500 text-white px-6 py-3 rounded-lg hover:bg-purple-600 font-bold text-lg">
+              <Save /> Optimize Cuts
+            </button>
+            {optimizedLayouts.length > 0 && (
+              <button onClick={exportToPDF} className="flex items-center gap-2 bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 font-bold text-lg">
+                <Download /> Export to PDF
+              </button>
+            )}
+          </div>
+
+          {optimizedLayouts.length > 0 && (
+            <div className="space-y-6">
+              {optimizedLayouts.map((layout, idx) => (
+                <div key={layout.id} className="bg-white rounded-lg shadow p-6">
+                  <h3 className="text-xl font-bold mb-4">Panel {idx + 1} - Waste: {layout.waste}%</h3>
+                  <canvas ref={el => el && drawLayout(layout, el)} width={800} height={600} className="w-full border-2 border-gray-300 rounded" />
+                </div>
+              ))}
+
+              {offcuts.length > 0 && (
+                <div className="bg-white rounded-lg shadow p-6">
+                  <h3 className="text-xl font-bold mb-4">Offcuts Inventory ({offcuts.length} pieces)</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                    {offcuts.map((offcut, idx) => (
+                      <div key={idx} className="bg-blue-50 p-3 rounded border border-blue-200">
+                        <div className="font-semibold">{convertFromMM(offcut.width).toFixed(1)} × {convertFromMM(offcut.height).toFixed(1)} {unit}</div>
+                        <div className="text-sm text-gray-600">Area: {(convertFromMM(offcut.width) * convertFromMM(offcut.height)).toFixed(2)} {unit}²</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<GlassOptimizer />);
+  </script>
+</body>
 </html>
