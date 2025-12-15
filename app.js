@@ -1,0 +1,462 @@
+const { useState } = React;
+
+// Lucide icons as inline SVG components
+const Plus = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <line x1="12" y1="5" x2="12" y2="19"></line>
+    <line x1="5" y1="12" x2="19" y2="12"></line>
+  </svg>
+);
+
+const Trash2 = () => (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <polyline points="3 6 5 6 21 6"></polyline>
+    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+    <line x1="10" y1="11" x2="10" y2="17"></line>
+    <line x1="14" y1="11" x2="14" y2="17"></line>
+  </svg>
+);
+
+const Settings = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <circle cx="12" cy="12" r="3"></circle>
+    <path d="M12 1v6m0 6v6m9-9h-6m-6 0H3"></path>
+  </svg>
+);
+
+const Save = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+    <polyline points="17 21 17 13 7 13 7 21"></polyline>
+    <polyline points="7 3 7 8 15 8"></polyline>
+  </svg>
+);
+
+const Download = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+    <polyline points="7 10 12 15 17 10"></polyline>
+    <line x1="12" y1="15" x2="12" y2="3"></line>
+  </svg>
+);
+
+const GlassOptimizer = () => {
+  const [unit, setUnit] = useState('mm');
+  const [maxCutLength, setMaxCutLength] = useState(3000);
+  const [minUsefulWaste, setMinUsefulWaste] = useState(300);
+  const [minBreakableSize, setMinBreakableSize] = useState(100);
+  const [stockPanels, setStockPanels] = useState([
+    { id: 1, width: 2440, height: 3660, quantity: 10 }
+  ]);
+  const [cutPieces, setCutPieces] = useState([]);
+  const [optimizedLayouts, setOptimizedLayouts] = useState([]);
+  const [offcuts, setOffcuts] = useState([]);
+  const [showSettings, setShowSettings] = useState(false);
+
+  const unitConversions = { mm: 1, cm: 10, inches: 25.4, feet: 304.8 };
+  const convertFromMM = (value) => value / unitConversions[unit];
+
+  const addStockPanel = () => {
+    setStockPanels([...stockPanels, { id: Date.now(), width: 2440, height: 3660, quantity: 1 }]);
+  };
+
+  const updateStockPanel = (id, field, value) => {
+    setStockPanels(stockPanels.map(panel =>
+      panel.id === id ? { ...panel, [field]: parseFloat(value) || 0 } : panel
+    ));
+  };
+
+  const deleteStockPanel = (id) => {
+    setStockPanels(stockPanels.filter(panel => panel.id !== id));
+  };
+
+  const addCutPiece = () => {
+    setCutPieces([...cutPieces, { id: Date.now(), width: 500, height: 500, quantity: 1, customer: '' }]);
+  };
+
+  const updateCutPiece = (id, field, value) => {
+    setCutPieces(cutPieces.map(piece =>
+      piece.id === id ? { ...piece, [field]: field === 'customer' ? value : (parseFloat(value) || 0) } : piece
+    ));
+  };
+
+  const deleteCutPiece = (id) => {
+    setCutPieces(cutPieces.filter(piece => piece.id !== id));
+  };
+
+  const optimizeCuts = () => {
+    if (cutPieces.length === 0 || stockPanels.length === 0) {
+      alert('Please add stock panels and cut pieces first');
+      return;
+    }
+
+    const layouts = [];
+    const newOffcuts = [];
+    let remainingPieces = [];
+    
+    cutPieces.forEach(piece => {
+      for (let i = 0; i < piece.quantity; i++) {
+        remainingPieces.push({ ...piece, uniqueId: `${piece.id}-${i}`, originalId: piece.id });
+      }
+    });
+
+    remainingPieces.sort((a, b) => (b.width * b.height) - (a.width * a.height));
+
+    let panelIndex = 0;
+    let stockPanelPool = [];
+    
+    stockPanels.forEach(panel => {
+      for (let i = 0; i < panel.quantity; i++) {
+        stockPanelPool.push({ ...panel, usedPanelId: `panel-${panelIndex++}` });
+      }
+    });
+
+    for (const stockPanel of stockPanelPool) {
+      if (remainingPieces.length === 0) break;
+
+      const layout = {
+        id: stockPanel.usedPanelId,
+        stockWidth: stockPanel.width,
+        stockHeight: stockPanel.height,
+        pieces: [],
+        waste: 0
+      };
+
+      const freeRectangles = [{ x: 0, y: 0, width: stockPanel.width, height: stockPanel.height }];
+
+      while (freeRectangles.length > 0 && remainingPieces.length > 0) {
+        let bestFit = null;
+        let bestPieceIndex = -1;
+        let bestRectIndex = -1;
+        let bestRotated = false;
+
+        for (let r = 0; r < freeRectangles.length; r++) {
+          const rect = freeRectangles[r];
+          
+          for (let p = 0; p < remainingPieces.length; p++) {
+            const piece = remainingPieces[p];
+            
+            if (piece.width <= rect.width && piece.height <= rect.height) {
+              const fit = (rect.width * rect.height) - (piece.width * piece.height);
+              if (bestFit === null || fit < bestFit) {
+                bestFit = fit;
+                bestPieceIndex = p;
+                bestRectIndex = r;
+                bestRotated = false;
+              }
+            }
+            
+            if (piece.height <= rect.width && piece.width <= rect.height) {
+              const fit = (rect.width * rect.height) - (piece.height * piece.width);
+              if (bestFit === null || fit < bestFit) {
+                bestFit = fit;
+                bestPieceIndex = p;
+                bestRectIndex = r;
+                bestRotated = true;
+              }
+            }
+          }
+        }
+
+        if (bestPieceIndex === -1) break;
+
+        const piece = remainingPieces[bestPieceIndex];
+        const rect = freeRectangles[bestRectIndex];
+        
+        const placedWidth = bestRotated ? piece.height : piece.width;
+        const placedHeight = bestRotated ? piece.width : piece.height;
+
+        if (placedWidth > maxCutLength || placedHeight > maxCutLength) {
+          remainingPieces.splice(bestPieceIndex, 1);
+          continue;
+        }
+
+        layout.pieces.push({
+          x: rect.x,
+          y: rect.y,
+          width: placedWidth,
+          height: placedHeight,
+          customer: piece.customer,
+          rotated: bestRotated,
+          originalWidth: piece.width,
+          originalHeight: piece.height
+        });
+
+        freeRectangles.splice(bestRectIndex, 1);
+        
+        if (rect.x + placedWidth < rect.x + rect.width) {
+          freeRectangles.push({
+            x: rect.x + placedWidth,
+            y: rect.y,
+            width: rect.width - placedWidth,
+            height: placedHeight
+          });
+        }
+        
+        if (rect.y + placedHeight < rect.y + rect.height) {
+          freeRectangles.push({
+            x: rect.x,
+            y: rect.y + placedHeight,
+            width: rect.width,
+            height: rect.height - placedHeight
+          });
+        }
+
+        remainingPieces.splice(bestPieceIndex, 1);
+      }
+
+      const usedArea = layout.pieces.reduce((sum, p) => sum + (p.width * p.height), 0);
+      const totalArea = stockPanel.width * stockPanel.height;
+      layout.waste = ((totalArea - usedArea) / totalArea * 100).toFixed(2);
+
+      freeRectangles.forEach(rect => {
+        if (rect.width >= minUsefulWaste && rect.height >= minUsefulWaste &&
+            rect.width >= minBreakableSize && rect.height >= minBreakableSize) {
+          newOffcuts.push({
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+            area: Math.round(rect.width * rect.height)
+          });
+        }
+      });
+
+      if (layout.pieces.length > 0) {
+        layouts.push(layout);
+      }
+    }
+
+    if (remainingPieces.length > 0) {
+      alert(`Warning: ${remainingPieces.length} pieces could not be fitted. Please add more stock panels or adjust dimensions.`);
+    }
+
+    setOptimizedLayouts(layouts);
+    setOffcuts(newOffcuts);
+  };
+
+  const drawLayout = (layout, canvas) => {
+    const ctx = canvas.getContext('2d');
+    const padding = 40;
+    const scale = Math.min(
+      (canvas.width - padding * 2) / layout.stockWidth,
+      (canvas.height - padding * 2) / layout.stockHeight
+    );
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(padding, padding, layout.stockWidth * scale, layout.stockHeight * scale);
+
+    const colors = ['#FFB6C1', '#87CEEB', '#98FB98', '#DDA0DD', '#F0E68C', '#FFE4B5'];
+    
+    layout.pieces.forEach((piece, idx) => {
+      const x = padding + piece.x * scale;
+      const y = padding + piece.y * scale;
+      const w = piece.width * scale;
+      const h = piece.height * scale;
+
+      ctx.fillStyle = colors[idx % colors.length];
+      ctx.fillRect(x, y, w, h);
+
+      ctx.strokeStyle = '#333333';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, w, h);
+
+      ctx.fillStyle = '#000000';
+      ctx.font = 'bold 12px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      const labelY = y + h / 2;
+      const customer = piece.customer || 'No Customer';
+      const size = `${convertFromMM(piece.originalWidth).toFixed(1)} × ${convertFromMM(piece.originalHeight).toFixed(1)} ${unit}`;
+      const rotated = piece.rotated ? ' (R)' : '';
+      
+      ctx.fillText(customer, x + w / 2, labelY - 10);
+      ctx.fillText(size + rotated, x + w / 2, labelY + 10);
+    });
+
+    ctx.fillStyle = '#000000';
+    ctx.font = '14px Arial';
+    ctx.fillText(`${convertFromMM(layout.stockWidth).toFixed(1)} × ${convertFromMM(layout.stockHeight).toFixed(1)} ${unit}`, 
+      padding + (layout.stockWidth * scale) / 2, padding - 15);
+    ctx.fillText(`Waste: ${layout.waste}%`, padding + (layout.stockWidth * scale) / 2, canvas.height - 10);
+  };
+
+  const exportToPDF = () => {
+    if (optimizedLayouts.length === 0) {
+      alert('Please optimize cuts first');
+      return;
+    }
+
+    let html = `<html><head><title>Glass Cutting Plan</title><style>body{font-family:Arial;margin:20px}h1{color:#333}.layout{page-break-after:always;margin-bottom:40px}canvas{border:2px solid #000}table{width:100%;border-collapse:collapse;margin:20px 0}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background-color:#4CAF50;color:white}</style></head><body><h1>Glass Cutting Optimization Plan</h1><p>Generated: ${new Date().toLocaleString()}</p><p>Unit: ${unit}</p>`;
+
+    optimizedLayouts.forEach((layout, idx) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 800;
+      canvas.height = 600;
+      drawLayout(layout, canvas);
+      
+      html += `<div class="layout"><h2>Panel ${idx + 1} - Waste: ${layout.waste}%</h2><img src="${canvas.toDataURL()}" style="max-width: 100%;"><table><tr><th>Customer</th><th>Size (${unit})</th><th>Rotated</th></tr>`;
+      
+      layout.pieces.forEach(piece => {
+        html += `<tr><td>${piece.customer || 'No Customer'}</td><td>${convertFromMM(piece.originalWidth).toFixed(1)} × ${convertFromMM(piece.originalHeight).toFixed(1)}</td><td>${piece.rotated ? 'Yes' : 'No'}</td></tr>`;
+      });
+      
+      html += `</table></div>`;
+    });
+
+    if (offcuts.length > 0) {
+      html += `<h2>Offcuts Inventory</h2><table><tr><th>Width (${unit})</th><th>Height (${unit})</th><th>Area (${unit}²)</th></tr>`;
+      
+      offcuts.forEach(offcut => {
+        html += `<tr><td>${convertFromMM(offcut.width).toFixed(1)}</td><td>${convertFromMM(offcut.height).toFixed(1)}</td><td>${(convertFromMM(offcut.width) * convertFromMM(offcut.height)).toFixed(2)}</td></tr>`;
+      });
+      
+      html += `</table>`;
+    }
+
+    html += `</body></html>`;
+
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `glass-cutting-plan-${Date.now()}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    alert('HTML file downloaded. Open it in a browser and use Print to PDF.');
+  };
+
+  return (
+    <div className="w-full h-screen overflow-auto p-6 bg-gray-50">
+      <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+        <h1 className="text-3xl font-bold text-gray-800 mb-2">Glass Cutting Optimizer</h1>
+        <p className="text-gray-600">AI-powered cutting optimization for glass industry</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-bold text-gray-800">Stock Panels</h2>
+            <button onClick={addStockPanel} className="flex items-center gap-2 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+              <Plus /> Add Panel
+            </button>
+          </div>
+          <div className="space-y-3">
+            {stockPanels.map(panel => (
+              <div key={panel.id} className="flex gap-2 items-center bg-gray-50 p-3 rounded">
+                <span className="text-sm font-medium whitespace-nowrap">Width:</span>
+                <input type="number" value={panel.width} onChange={(e) => updateStockPanel(panel.id, 'width', e.target.value)} className="w-24 px-2 py-1 border rounded" />
+                <span className="text-sm font-medium whitespace-nowrap">Height:</span>
+                <input type="number" value={panel.height} onChange={(e) => updateStockPanel(panel.id, 'height', e.target.value)} className="w-24 px-2 py-1 border rounded" />
+                <span className="text-sm font-medium whitespace-nowrap">Qty:</span>
+                <input type="number" value={panel.quantity} onChange={(e) => updateStockPanel(panel.id, 'quantity', e.target.value)} className="w-20 px-2 py-1 border rounded" />
+                <button onClick={() => deleteStockPanel(panel.id)} className="text-red-500 hover:text-red-700 ml-auto">
+                  <Trash2 />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-lg shadow p-6">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-bold text-gray-800">Cut Pieces</h2>
+            <button onClick={addCutPiece} className="flex items-center gap-2 bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">
+              <Plus /> Add Piece
+            </button>
+          </div>
+          <div className="space-y-3">
+            {cutPieces.map(piece => (
+              <div key={piece.id} className="flex gap-2 items-center bg-gray-50 p-3 rounded">
+                <span className="text-sm font-medium whitespace-nowrap">W:</span>
+                <input type="number" value={piece.width} onChange={(e) => updateCutPiece(piece.id, 'width', e.target.value)} className="w-20 px-2 py-1 border rounded" />
+                <span className="text-sm font-medium whitespace-nowrap">H:</span>
+                <input type="number" value={piece.height} onChange={(e) => updateCutPiece(piece.id, 'height', e.target.value)} className="w-20 px-2 py-1 border rounded" />
+                <span className="text-sm font-medium whitespace-nowrap">Q:</span>
+                <input type="number" value={piece.quantity} onChange={(e) => updateCutPiece(piece.id, 'quantity', e.target.value)} className="w-16 px-2 py-1 border rounded" />
+                <span className="text-sm font-medium whitespace-nowrap">Customer:</span>
+                <input type="text" value={piece.customer} onChange={(e) => updateCutPiece(piece.id, 'customer', e.target.value)} className="flex-1 px-2 py-1 border rounded" placeholder="Name" />
+                <button onClick={() => deleteCutPiece(piece.id)} className="text-red-500 hover:text-red-700">
+                  <Trash2 />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow p-6 mb-6">
+        <button onClick={() => setShowSettings(!showSettings)} className="flex items-center gap-2 text-lg font-bold text-gray-800 mb-4">
+          <Settings /> Settings {showSettings ? '▼' : '▶'}
+        </button>
+        
+        {showSettings && (
+          <div className="flex flex-wrap gap-4 items-end">
+            <div>
+              <label className="block text-sm font-medium mb-1">Unit:</label>
+              <select value={unit} onChange={(e) => setUnit(e.target.value)} className="px-3 py-2 border rounded">
+                <option value="mm">mm</option>
+                <option value="cm">cm</option>
+                <option value="inches">inches</option>
+                <option value="feet">feet</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Max Cut Length ({unit}):</label>
+              <input type="number" value={maxCutLength} onChange={(e) => setMaxCutLength(parseFloat(e.target.value) || 0)} className="w-32 px-3 py-2 border rounded" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Min Useful Waste ({unit}):</label>
+              <input type="number" value={minUsefulWaste} onChange={(e) => setMinUsefulWaste(parseFloat(e.target.value) || 0)} className="w-32 px-3 py-2 border rounded" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1">Min Breakable Size ({unit}):</label>
+              <input type="number" value={minBreakableSize} onChange={(e) => setMinBreakableSize(parseFloat(e.target.value) || 0)} className="w-32 px-3 py-2 border rounded" />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex gap-4 mb-6">
+        <button onClick={optimizeCuts} className="flex items-center gap-2 bg-purple-500 text-white px-6 py-3 rounded-lg hover:bg-purple-600 font-bold text-lg">
+          <Save /> Optimize Cuts
+        </button>
+        {optimizedLayouts.length > 0 && (
+          <button onClick={exportToPDF} className="flex items-center gap-2 bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 font-bold text-lg">
+            <Download /> Export to PDF
+          </button>
+        )}
+      </div>
+
+      {optimizedLayouts.length > 0 && (
+        <div className="space-y-6">
+          {optimizedLayouts.map((layout, idx) => (
+            <div key={layout.id} className="bg-white rounded-lg shadow p-6">
+              <h3 className="text-xl font-bold mb-4">Panel {idx + 1} - Waste: {layout.waste}%</h3>
+              <canvas ref={el => el && drawLayout(layout, el)} width={800} height={600} className="w-full border-2 border-gray-300 rounded" />
+            </div>
+          ))}
+
+          {offcuts.length > 0 && (
+            <div className="bg-white rounded-lg shadow p-6">
+              <h3 className="text-xl font-bold mb-4">Offcuts Inventory ({offcuts.length} pieces)</h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                {offcuts.map((offcut, idx) => (
+                  <div key={idx} className="bg-blue-50 p-3 rounded border border-blue-200">
+                    <div className="font-semibold">{convertFromMM(offcut.width).toFixed(1)} × {convertFromMM(offcut.height).toFixed(1)} {unit}</div>
+                    <div className="text-sm text-gray-600">Area: {(convertFromMM(offcut.width) * convertFromMM(offcut.height)).toFixed(2)} {unit}²</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<GlassOptimizer />);
