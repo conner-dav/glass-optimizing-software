@@ -30,18 +30,7 @@ A professional desktop application for optimizing glass sheet cutting layouts, d
 
 ## 🚀 Quick Start & Installation
 
-### For End Users
-1. Download `Glass-Cutting-Optimizer-Setup.exe` from the Releases page.
-2. Run the installer executable on your desktop.
-3. Launch **Glass Cutting Optimizer Pro**.
-
 > **Note**: Windows SmartScreen may display a warning if the executable is un-signed. Click **More Info** → **Run Anyway** to launch.
-
-### For Developers
-
-**Prerequisites**
-* **Node.js**: v16.0 or higher
-* **npm**: v7.0 or higher
 
 **Build Setup**
 
