@@ -48,4 +48,4 @@ A professional desktop application for optimizing glass sheet cutting layouts, d
 1. Clone the repository:
    ```bash
    git clone [https://github.com/your-username/glass-cutting-optimizer.git](https://github.com/your-username/glass-cutting-optimizer.git)
-   cd glass-cutting-optimizer
+   cd glass-optimizing-software
